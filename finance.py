@@ -13,6 +13,13 @@ Original file is located at
 # Installs
 
 !pip install python-dotenv
+!pip install mplfinance
+!pip install --upgrade keras
+
+# Environment Variables
+
+KERAS_BACKEND = os.environ.get('KERAS_BACKEND')
+APIKEY = os.environ.get('APIKEY')
 
 # Imports
 
@@ -21,17 +28,18 @@ import requests
 import dotenv
 import pandas as pd
 import matplotlib.pyplot as plt
+import mplfinance as mpf
 
 from datetime import datetime
 from google.colab import drive
+
+import keras
 
 # Mount
 
 dotenv.load_dotenv('/content/.env')
 
 # Constants
-
-APIKEY = os.environ.get('APIKEY')
 
 NAME_FUNCTION = 'function='
 NAME_APIKEY = '&apikey='
@@ -45,21 +53,72 @@ VALUE_TO_SYMBOL = 'USD'
 URL_BASE = 'https://www.alphavantage.co/query?'
 URL_FX_DAILY = URL_BASE + NAME_FUNCTION + VALUE_FUNCTION + NAME_FROM_SYMBOL + VALUE_FROM_SYMBOL + NAME_TO_SYMBOL + VALUE_TO_SYMBOL + NAME_APIKEY + APIKEY
 
+SERIES = 'Time Series FX (Daily)'
+DATE = 'Date'
+OPEN = 'Open'
+CLOSE = 'Close'
+HIGH = 'High'
+LOW = 'Low'
+
+PLOT_LEGEND_LOCATION = 'upper right'
+PLOT_TITLE = 'Variation of exchange rates for the past 100 days between AUD and USD'
+
+# Get data
 r = requests.get(URL_FX_DAILY)
 data = r.json()
 
+# Process data
 data_list = []
-for date in data['Time Series FX (Daily)']:
-  data['Time Series FX (Daily)'][date]['date'] = datetime.strptime(date, '%Y-%m-%d').date()
-  data_list.append(data['Time Series FX (Daily)'][date])
+for date in data[SERIES]:
+  data[SERIES][date][DATE] = datetime.strptime(date, '%Y-%m-%d').date()
+  data_list.append(data[SERIES][date])
 df = pd.DataFrame(data_list)
-df.columns = ['Open', 'High', 'Low', 'Close', 'Date']
-df['Open'] = df['Open'].apply(lambda x: float(x))
-df['High'] = df['High'].apply(lambda x: float(x))
-df['Low'] = df['Low'].apply(lambda x: float(x))
-df['Close'] = df['Close'].apply(lambda x: float(x))
+df.columns = [OPEN, HIGH, LOW, CLOSE, DATE]
+df = df.set_index(DATE)
+df[OPEN] = df[OPEN].apply(lambda x: float(x))
+df[HIGH] = df[HIGH].apply(lambda x: float(x))
+df[LOW] = df[LOW].apply(lambda x: float(x))
+df[CLOSE] = df[CLOSE].apply(lambda x: float(x))
+max_pairs_dict = {OPEN: [df[OPEN].idxmax(),df[OPEN].max()],CLOSE: [df[CLOSE].idxmax(),df[CLOSE].max()], HIGH: [df[HIGH].idxmax(),df[HIGH].max()], LOW: [df[LOW].idxmax(),df[LOW].max()]}
+min_pairs_dict = {OPEN: [df[OPEN].idxmin(),df[OPEN].min()],CLOSE: [df[CLOSE].idxmin(),df[CLOSE].min()], HIGH: [df[HIGH].idxmin(),df[HIGH].min()], LOW: [df[LOW].idxmin(),df[LOW].min()]}
+high_low_diff = pd.DataFrame(df[HIGH] - df[LOW] > 0.02, columns=['Difference_Threshold_Reached'])
 
-plt.plot(df['Date'],df['Open'],color='blue')
-plt.plot(df['Date'],df['Close'],color='red')
-plt.plot(df['Date'],df['High'],color='green')
-plt.plot(df['Date'],df['Low'],color='orange')
+# Statistics
+print(df.info())
+print(df.describe())
+
+# Visualize
+plt.legend(loc=PLOT_LEGEND_LOCATION)
+plt.title(PLOT_TITLE)
+plt.plot(df.index,df[OPEN],color='blue',label=OPEN,linestyle='solid')
+plt.plot(df.index,df[CLOSE],color='red',label=CLOSE,linestyle='dashed')
+plt.plot(df.index,df[HIGH],color='green',label=HIGH,linestyle='dotted')
+plt.plot(df.index,df[LOW],color='orange',label=LOW,linestyle='dashdot')
+
+plt.plot(max_pairs_dict[OPEN][0], max_pairs_dict[OPEN][1],'bo')
+plt.plot(max_pairs_dict[CLOSE][0], max_pairs_dict[CLOSE][1],'ro')
+plt.plot(max_pairs_dict[HIGH][0], max_pairs_dict[HIGH][1],'go')
+plt.plot(max_pairs_dict[LOW][0], max_pairs_dict[LOW][1],'o', c='orange')
+plt.plot(max_pairs_dict[OPEN][0], max_pairs_dict[OPEN][1],'bo')
+plt.plot(max_pairs_dict[CLOSE][0], max_pairs_dict[CLOSE][1],'ro')
+plt.plot(max_pairs_dict[HIGH][0], max_pairs_dict[HIGH][1],'go')
+plt.plot(max_pairs_dict[LOW][0], max_pairs_dict[LOW][1],'o',c='orange')
+
+plt.plot(min_pairs_dict[OPEN][0], min_pairs_dict[OPEN][1],'bo')
+plt.plot(min_pairs_dict[CLOSE][0], min_pairs_dict[CLOSE][1],'ro')
+plt.plot(min_pairs_dict[HIGH][0], min_pairs_dict[HIGH][1],'go')
+plt.plot(min_pairs_dict[LOW][0], min_pairs_dict[LOW][1],'o', c='orange')
+plt.plot(min_pairs_dict[OPEN][0], min_pairs_dict[OPEN][1],'bo')
+plt.plot(min_pairs_dict[CLOSE][0], min_pairs_dict[CLOSE][1],'ro')
+plt.plot(min_pairs_dict[HIGH][0], min_pairs_dict[HIGH][1],'go')
+plt.plot(min_pairs_dict[LOW][0], min_pairs_dict[LOW][1],'o', c='orange')
+
+plt.plot(high_low_diff[high_low_diff['Difference_Boolean'] == True].index, df[HIGH][high_low_diff['Difference_Boolean'] == True], color='black', marker='*', markersize=10)
+
+# Candle plot
+df.index = pd.DatetimeIndex(df.index)
+mpf.plot(df, type='candle', volume=False)
+
+# Regression
+
+# AutoRegression vs ARIMA vs LSTM
