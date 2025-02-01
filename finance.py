@@ -17,15 +17,17 @@ Original file is located at
 !pip install --upgrade keras
 
 # Environment Variables
+import os
+import dotenv
+
+dotenv.load_dotenv('/content/.env')
 
 KERAS_BACKEND = os.environ.get('KERAS_BACKEND')
 APIKEY = os.environ.get('APIKEY')
 
 # Imports
 
-import os
 import requests
-import dotenv
 import pandas as pd
 import matplotlib.pyplot as plt
 import mplfinance as mpf
@@ -34,10 +36,6 @@ from datetime import datetime
 from google.colab import drive
 
 import keras
-
-# Mount
-
-dotenv.load_dotenv('/content/.env')
 
 # Constants
 
@@ -62,6 +60,9 @@ LOW = 'Low'
 
 PLOT_LEGEND_LOCATION = 'upper right'
 PLOT_TITLE = 'Variation of exchange rates for the past 100 days between AUD and USD'
+PLOT_TITLE_AR = 'Variation of exchange rates using AutoRegression for the next one month between AUD and USD'
+PLOT_TITLE_ARIMA = 'Variation of exchange rates using ARIMA for the next one month between AUD and USD'
+PLOT_TITLE_LSTM = 'Variation of exchange rates using LSTM for the next one month between AUD and USD'
 
 # Get data
 r = requests.get(URL_FX_DAILY)
@@ -75,6 +76,7 @@ for date in data[SERIES]:
 df = pd.DataFrame(data_list)
 df.columns = [OPEN, HIGH, LOW, CLOSE, DATE]
 df = df.set_index(DATE)
+df = df.iloc[::-1]
 df[OPEN] = df[OPEN].apply(lambda x: float(x))
 df[HIGH] = df[HIGH].apply(lambda x: float(x))
 df[LOW] = df[LOW].apply(lambda x: float(x))
@@ -113,12 +115,115 @@ plt.plot(min_pairs_dict[CLOSE][0], min_pairs_dict[CLOSE][1],'ro')
 plt.plot(min_pairs_dict[HIGH][0], min_pairs_dict[HIGH][1],'go')
 plt.plot(min_pairs_dict[LOW][0], min_pairs_dict[LOW][1],'o', c='orange')
 
-plt.plot(high_low_diff[high_low_diff['Difference_Boolean'] == True].index, df[HIGH][high_low_diff['Difference_Boolean'] == True], color='black', marker='*', markersize=10)
+plt.plot(high_low_diff[high_low_diff['Difference_Threshold_Reached'] == True].index, df[HIGH][high_low_diff['Difference_Threshold_Reached'] == True], color='black', marker='*', markersize=10)
 
 # Candle plot
-df.index = pd.DatetimeIndex(df.index)
-mpf.plot(df, type='candle', volume=False)
+
+# df.index = pd.DatetimeIndex(df.index)
+# mpf.plot(df, type='candle', volume=False)
 
 # Regression
 
-# AutoRegression vs ARIMA vs LSTM
+# AutoRegression vs ARIMA (AutoRegressive Integrated Moving Average)
+
+from statsmodels.tsa.arima.model import ARIMA
+
+dates_forecast = pd.date_range(start=df.index[-1], periods=31, freq='D')[1:]
+
+
+ar_model = ARIMA(df[LOW], order=(30,0,0)).fit()
+forecast = ar_model.forecast(steps=30)
+
+plt.plot(df.index, df[LOW], label="Actual")
+plt.plot(dates_forecast, forecast, label="Forecast", linestyle='dashed')
+plt.plot(dates_forecast[forecast.idxmin()-101], forecast.min(), color='black', marker='*', markersize=10)
+plt.legend()
+plt.title(PLOT_TITLE_AR)
+plt.show()
+
+arima_model = ARIMA(df[LOW], order=(30,1,3)).fit()
+forecast = arima_model.forecast(steps=30)
+
+plt.plot(df.index, df[LOW], label="Actual")
+plt.plot(dates_forecast, forecast, label="Forecast", linestyle='dotted')
+plt.plot(dates_forecast[forecast.idxmin()-101], forecast.min(), color='black', marker='*', markersize=10)
+plt.legend()
+plt.title(PLOT_TITLE_ARIMA)
+plt.show()
+
+arima_model = ARIMA(df[LOW], order=(30,2,5)).fit()
+forecast = arima_model.forecast(steps=30)
+
+plt.plot(df.index, df[LOW], label="Actual")
+plt.plot(dates_forecast, forecast, label="Forecast", linestyle='dotted')
+plt.plot(dates_forecast[forecast.idxmin()-101], forecast.min(), color='black', marker='*', markersize=10)
+plt.legend()
+plt.title(PLOT_TITLE_ARIMA)
+plt.show()
+
+# LSTM
+
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+import numpy as np
+
+scaler = MinMaxScaler()
+scaled_data = scaler.fit_transform(df[LOW].values.reshape(-1, 1))
+
+def create_sequences(data, time_steps=30):
+    X, y = [], []
+    for i in range(len(data) - time_steps):
+        X.append(data[i:i+time_steps])
+        y.append(data[i+time_steps])
+    return np.array(X), np.array(y)
+
+time_steps = 30
+X, y = create_sequences(scaled_data, time_steps)
+
+X = X.reshape(X.shape[0], X.shape[1], 1)
+
+model1 = Sequential([
+    LSTM(100, activation='relu', return_sequences=True, input_shape=(time_steps, 1)),
+    LSTM(50, activation='relu'),
+    Dense(1)
+])
+
+model2 = Sequential([
+    LSTM(100, activation='relu', return_sequences=True, input_shape=(time_steps, 1)),
+    LSTM(50, activation='relu', return_sequences=True),
+    LSTM(10, activation='relu'),
+    Dense(1)
+])
+
+model3 = Sequential([
+    LSTM(200, activation='relu', return_sequences=True, input_shape=(time_steps, 1)),
+    LSTM(100, activation='relu'),
+    Dense(1)
+])
+
+models_list = [model1,model2,model3]
+for model in models_list:
+  model.compile(optimizer='adam', loss='mse')
+  model.fit(X, y, epochs=50, batch_size=16, verbose=True)
+
+  predicted_values = []
+  temp = X[-1]
+  for i in range(30):
+    last_sequence = temp.reshape(1, time_steps, 1)
+    predicted_value = model.predict(last_sequence)
+    temp = []
+    for j in range(1,30):
+      temp.append([last_sequence[0][j][0]])
+    temp.append(predicted_value[0])
+    temp = np.array([temp])
+    predicted_values.append(scaler.inverse_transform(predicted_value)[0][0])
+
+  plt.figure(figsize=(10, 5))
+  plt.plot(df.index, df[LOW], label="Actual")
+  plt.plot(pd.date_range(start=df.index[-1], periods=31, freq='D')[1:], predicted_values, label="Forecast", linestyle='dotted')
+  plt.plot(dates_forecast[predicted_values.index(min(predicted_values))], min(predicted_values), color='black', marker='*', markersize=10)
+  plt.axvline(df.index[-1], color="red", linestyle="dashed", label="Prediction Point")
+  plt.legend()
+  plt.title(PLOT_TITLE_LSTM)
+  plt.show()
