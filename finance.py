@@ -10,11 +10,19 @@ Original file is located at
 ### Author: Vejaykarthy Srithar
 """
 
+!pip install azure-cli
+
+!az login
+
 # Installs
 
+!pip install psycopg
 !pip install python-dotenv
 !pip install mplfinance
 !pip install --upgrade keras
+
+# For colab ip:
+# !curl ifconfig.me
 
 # Environment Variables
 import os
@@ -63,6 +71,7 @@ PLOT_TITLE = 'Variation of exchange rates for the past 100 days between AUD and 
 PLOT_TITLE_AR = 'Variation of exchange rates using AutoRegression for the next one month between AUD and USD'
 PLOT_TITLE_ARIMA = 'Variation of exchange rates using ARIMA for the next one month between AUD and USD'
 PLOT_TITLE_LSTM = 'Variation of exchange rates using LSTM for the next one month between AUD and USD'
+PLOT_TITLE_GRU = 'Variation of exchange rates using GRU for the next one month between AUD and USD'
 
 # Get data
 r = requests.get(URL_FX_DAILY)
@@ -122,6 +131,30 @@ plt.plot(high_low_diff[high_low_diff['Difference_Threshold_Reached'] == True].in
 # df.index = pd.DatetimeIndex(df.index)
 # mpf.plot(df, type='candle', volume=False)
 
+# Create DB connection
+import psycopg
+from get_conn import get_connection_uri
+
+DBHOST = os.environ.get('DBHOST')
+DBNAME = os.environ.get('DBNAME')
+DBUSER = os.environ.get('DBUSER')
+DBPASSWORD = os.environ.get('DBPASSWORD')
+SSLMODE = os.environ.get('SSLMODE')
+
+conn_string = get_connection_uri(DBHOST,DBNAME,DBUSER,DBPASSWORD,SSLMODE)
+
+conn = psycopg.connect(conn_string)
+print("Connection established")
+cursor = conn.cursor()
+
+# Drop previous results table if it exists
+cursor.execute("DROP TABLE IF EXISTS results;")
+print("Finished dropping table (if existed)")
+
+# Create results table
+cursor.execute("CREATE TABLE results (id serial PRIMARY KEY, model_name VARCHAR(50), model_details  VARCHAR(50), date  DATE, predicted  FLOAT8, actual FLOAT8, error_difference FLOAT8);")
+print("Finished creating table")
+
 # Regression
 
 # AutoRegression vs ARIMA (AutoRegressive Integrated Moving Average)
@@ -129,7 +162,8 @@ plt.plot(high_low_diff[high_low_diff['Difference_Threshold_Reached'] == True].in
 from statsmodels.tsa.arima.model import ARIMA
 
 dates_forecast = pd.date_range(start=df.index[-1], periods=31, freq='D')[1:]
-
+models_names_list = ['AR-model','ARIMA-model1','ARIMA-model2']
+models_details_list = ['AR-model-30-0-0','ARIMA-model1-30-1-3','ARIMA-model2-30-2-5']
 
 ar_model = ARIMA(df[LOW], order=(30,0,0)).fit()
 forecast = ar_model.forecast(steps=30)
@@ -140,19 +174,11 @@ plt.plot(dates_forecast[forecast.idxmin()-101], forecast.min(), color='black', m
 plt.legend()
 plt.title(PLOT_TITLE_AR)
 plt.show()
+cursor.execute("INSERT INTO results (model_name, model_details, date, predicted, actual, error_difference) VALUES (%s, %s, %s, %s, %s, %s);", (models_names_list[0], models_details_list[0], dates_forecast[1], forecast[101], 0, 0))
 
-arima_model = ARIMA(df[LOW], order=(30,1,3)).fit()
-forecast = arima_model.forecast(steps=30)
 
-plt.plot(df.index, df[LOW], label="Actual")
-plt.plot(dates_forecast, forecast, label="Forecast", linestyle='dotted')
-plt.plot(dates_forecast[forecast.idxmin()-101], forecast.min(), color='black', marker='*', markersize=10)
-plt.legend()
-plt.title(PLOT_TITLE_ARIMA)
-plt.show()
-
-arima_model = ARIMA(df[LOW], order=(30,2,5)).fit()
-forecast = arima_model.forecast(steps=30)
+arima_model1 = ARIMA(df[LOW], order=(30,1,3)).fit()
+forecast = arima_model1.forecast(steps=30)
 
 plt.plot(df.index, df[LOW], label="Actual")
 plt.plot(dates_forecast, forecast, label="Forecast", linestyle='dotted')
@@ -160,6 +186,19 @@ plt.plot(dates_forecast[forecast.idxmin()-101], forecast.min(), color='black', m
 plt.legend()
 plt.title(PLOT_TITLE_ARIMA)
 plt.show()
+cursor.execute("INSERT INTO results (model_name, model_details, date, predicted, actual, error_difference) VALUES (%s, %s, %s, %s, %s, %s);", (models_names_list[1], models_details_list[1], dates_forecast[1], forecast[101], 0, 0))
+
+
+arima_model2 = ARIMA(df[LOW], order=(30,2,5)).fit()
+forecast = arima_model2.forecast(steps=30)
+
+plt.plot(df.index, df[LOW], label="Actual")
+plt.plot(dates_forecast, forecast, label="Forecast", linestyle='dotted')
+plt.plot(dates_forecast[forecast.idxmin()-101], forecast.min(), color='black', marker='*', markersize=10)
+plt.legend()
+plt.title(PLOT_TITLE_ARIMA)
+plt.show()
+cursor.execute("INSERT INTO results (model_name, model_details, date, predicted, actual, error_difference) VALUES (%s, %s, %s, %s, %s, %s);", (models_names_list[2], models_details_list[2], dates_forecast[1], forecast[101], 0, 0))
 
 # LSTM
 
@@ -203,6 +242,9 @@ model3 = Sequential([
 ])
 
 models_list = [model1,model2,model3]
+models_names_list = ['LSTM-model1','LSTM-model2','LSTM-model3']
+models_details_list = ['LSTM-100-50','LSTM-100-50-10','LSTM-200-100']
+k = 0
 for model in models_list:
   model.compile(optimizer='adam', loss='mse')
   model.fit(X, y, epochs=50, batch_size=16, verbose=True)
@@ -218,6 +260,8 @@ for model in models_list:
     temp.append(predicted_value[0])
     temp = np.array([temp])
     predicted_values.append(scaler.inverse_transform(predicted_value)[0][0])
+  cursor.execute("INSERT INTO results (model_name, model_details, date, predicted, actual, error_difference) VALUES (%s, %s, %s, %s, %s, %s);", (models_names_list[k], models_details_list[k], dates_forecast[1], predicted_values[0], 0, 0))
+  k += 1
 
   plt.figure(figsize=(10, 5))
   plt.plot(df.index, df[LOW], label="Actual")
@@ -227,3 +271,89 @@ for model in models_list:
   plt.legend()
   plt.title(PLOT_TITLE_LSTM)
   plt.show()
+
+# GRU
+
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import GRU, Dense
+import numpy as np
+
+scaler = MinMaxScaler()
+scaled_data = scaler.fit_transform(df[LOW].values.reshape(-1, 1))
+
+def create_sequences(data, time_steps=30):
+    X, y = [], []
+    for i in range(len(data) - time_steps):
+        X.append(data[i:i+time_steps])
+        y.append(data[i+time_steps])
+    return np.array(X), np.array(y)
+
+time_steps = 30
+X, y = create_sequences(scaled_data, time_steps)
+
+X = X.reshape(X.shape[0], X.shape[1], 1)
+
+model1 = Sequential([
+    GRU(100, activation='relu', return_sequences=True, input_shape=(time_steps, 1)),
+    GRU(50, activation='relu'),
+    Dense(1)
+])
+
+model2 = Sequential([
+    GRU(100, activation='relu', return_sequences=True, input_shape=(time_steps, 1)),
+    GRU(50, activation='relu', return_sequences=True),
+    GRU(10, activation='relu'),
+    Dense(1)
+])
+
+model3 = Sequential([
+    GRU(200, activation='relu', return_sequences=True, input_shape=(time_steps, 1)),
+    GRU(100, activation='relu'),
+    Dense(1)
+])
+
+models_list = [model1,model2,model3]
+models_names_list = ['GRU-model1','GRU-model2','GRU-model3']
+models_details_list = ['GRU-100-50','GRU-100-50-10','GRU-200-100']
+k = 0
+for model in models_list:
+  model.compile(optimizer='adam', loss='mse')
+  model.fit(X, y, epochs=50, batch_size=16, verbose=True)
+
+  predicted_values = []
+  temp = X[-1]
+  for i in range(30):
+    last_sequence = temp.reshape(1, time_steps, 1)
+    predicted_value = model.predict(last_sequence)
+    temp = []
+    for j in range(1,30):
+      temp.append([last_sequence[0][j][0]])
+    temp.append(predicted_value[0])
+    temp = np.array([temp])
+    predicted_values.append(scaler.inverse_transform(predicted_value)[0][0])
+  cursor.execute("INSERT INTO results (model_name, model_details, date, predicted, actual, error_difference) VALUES (%s, %s, %s, %s, %s, %s);", (models_names_list[k], models_details_list[k], dates_forecast[1], predicted_values[0], 0, 0))
+  k += 1
+
+  plt.figure(figsize=(10, 5))
+  plt.plot(df.index, df[LOW], label="Actual")
+  plt.plot(pd.date_range(start=df.index[-1], periods=31, freq='D')[1:], predicted_values, label="Forecast", linestyle='dotted')
+  plt.plot(dates_forecast[predicted_values.index(min(predicted_values))], min(predicted_values), color='black', marker='*', markersize=10)
+  plt.axvline(df.index[-1], color="red", linestyle="dashed", label="Prediction Point")
+  plt.legend()
+  plt.title(PLOT_TITLE_GRU)
+  plt.show()
+
+# Insert some data into the table
+print("Inserted rows of data")
+
+# Show all records
+cursor.execute('SELECT * FROM results')
+results = cursor.fetchall()
+for result in results:
+  print(result)
+
+# Clean up
+conn.commit()
+cursor.close()
+conn.close()
